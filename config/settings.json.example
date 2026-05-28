@@ -1,0 +1,12 @@
+{
+  "jira": {
+    "cloudId": "your-atlassian-cloud-id",
+    "site": "yourorg.atlassian.net",
+    "projectKey": "YOUR_PROJECT_KEY",
+    "boardUrl": "https://yourorg.atlassian.net/jira/software/c/projects/YOUR_PROJECT/boards/1234"
+  },
+  "drive": {
+    "folderId": "your-google-drive-folder-id",
+    "folderUrl": "https://drive.google.com/drive/folders/your-folder-id"
+  }
+}
