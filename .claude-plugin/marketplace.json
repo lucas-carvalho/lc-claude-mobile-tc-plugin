@@ -1,0 +1,12 @@
+{
+  "name": "lc-mobile-tc",
+  "owner": { "name": "Lucas Carvalho Silva" },
+  "description": "Marketplace for Lucas Carvalho's mobile QA tooling — ships the Mobile Test Cases handler plugin.",
+  "plugins": [
+    {
+      "name": "lc-claude-mobile-test-cases-handler",
+      "source": "./",
+      "description": "Generates formatted QA test case spreadsheets from Jira tickets on a mobile project board, saving them directly to a Google Drive folder of your choice."
+    }
+  ]
+}
