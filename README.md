@@ -64,9 +64,12 @@ The plugin surfaces quality signals before generating TCs:
 
 ## Requirements
 
-- **Atlassian MCP** connected (for Jira access)
-- **Google Drive MCP** connected (for saving the spreadsheet)
-- Python with `openpyxl` (installed automatically if needed)
+- **Claude Code** with **Cowork** support — available on **Team** and **Enterprise** plans only
+- **Atlassian MCP** connected and authenticated (for Jira access)
+- **Google Drive MCP** connected and authenticated (for saving the spreadsheet)
+- Python 3 with `pip` available in the execution environment (`openpyxl` is installed automatically if needed)
+
+> **Note:** This plugin will not work on Free or Pro plans. It depends on the Cowork plugin system and persistent session storage, which are exclusive to Team and Enterprise plans.
 
 ## Configuration File
 

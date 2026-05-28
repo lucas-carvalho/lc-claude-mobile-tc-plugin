@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.5.1"
+  version: "0.5.2"
   author: "Lucas Carvalho"
 ---
 
@@ -22,6 +22,13 @@ This skill follows a **Shift Left** quality approach: quality concerns are raise
 ---
 
 ## Step 0: Load Configuration
+
+Record the start time immediately so elapsed duration can be reported in Step 7:
+
+```bash
+START_TIME=$(date +%s)
+echo "⏱ Start: $(date '+%Y-%m-%d %H:%M:%S')"
+```
 
 Before anything else, check if the plugin has been configured for this user.
 
@@ -176,5 +183,17 @@ Briefly tell the user:
 - How many TCs were generated and the Blocks breakdown
 - AC coverage summary (all ACs covered? any gaps?)
 - Where the file was saved (Drive link if successful, or local path)
+
+Also compute and report the elapsed time:
+
+```bash
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
+MINUTES=$((ELAPSED / 60))
+SECONDS=$((ELAPSED % 60))
+echo "⏱ Total time: ${MINUTES}m ${SECONDS}s"
+```
+
+Include the result inline in the confirmation message, e.g.: "Generated in **2m 14s**."
 
 Do not repeat all TC content in chat — the spreadsheet is the deliverable.
