@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.6.0"
+  version: "0.6.1"
   author: "Lucas Carvalho"
 ---
 
@@ -32,11 +32,22 @@ echo "⏱ Start: $(date '+%Y-%m-%d %H:%M:%S')"
 
 Before anything else, check if the plugin has been configured for this user.
 
-The settings file is stored in the **persistent** Cowork directory so it survives across sessions. Locate it dynamically — do NOT hardcode a session name:
+The settings file should live in a **persistent, writable** directory so it survives across sessions. Some Cowork session layouts mount `.claude/` as read-only — the discovery below tries multiple candidates and picks the first writable one. Do NOT hardcode a session name.
 
 ```bash
-SETTINGS=$(find /sessions -maxdepth 4 -name "lc-mobile-qa-settings.json" -path "*/mnt/.claude/*" 2>/dev/null | head -1)
-[ -f "$SETTINGS" ] && cat "$SETTINGS"
+# Reading: try all known locations, take the first that has the file
+SETTINGS=""
+for candidate in \
+    $(find /sessions -maxdepth 4 -name "lc-mobile-qa-settings.json" -path "*/mnt/.claude/*" 2>/dev/null) \
+    $(find /sessions -maxdepth 4 -name "lc-mobile-qa-settings.json" -path "*/mnt/outputs/*" 2>/dev/null) \
+    "$HOME/.claude/lc-mobile-qa-settings.json" \
+    "$HOME/.lc-mobile-qa-settings.json"; do
+  if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+    SETTINGS="$candidate"
+    break
+  fi
+done
+[ -n "$SETTINGS" ] && cat "$SETTINGS"
 ```
 
 - If the command **returns valid JSON**, extract `jira.cloudId`, `jira.site`, `jira.projectKey`, and `drive.folderId`. Proceed to Step 1.
@@ -57,11 +68,33 @@ Ask the following questions using AskUserQuestion:
 Once the user provides both:
 - Derive `jira.site` from the board URL (e.g. `yourorg.atlassian.net`)
 - Resolve `jira.cloudId` via Atlassian MCP if not determinable from the URL alone
-- Write the settings file to the **persistent** Cowork directory via Bash (find it dynamically):
+- Pick the **first writable** persistent directory and write the settings there. Fail loud, never silent:
 
 ```bash
-MNT_CLAUDE=$(find /sessions -maxdepth 3 -path "*/mnt/.claude" -type d 2>/dev/null | head -1)
-cat > "$MNT_CLAUDE/lc-mobile-qa-settings.json" << 'EOF'
+# Writing: pick the first writable persistent candidate
+SETTINGS_DIR=""
+for candidate in \
+    $(find /sessions -maxdepth 3 -path "*/mnt/.claude" -type d 2>/dev/null) \
+    "$HOME/.claude"; do
+  if [ -d "$candidate" ] && [ -w "$candidate" ]; then
+    SETTINGS_DIR="$candidate"; break
+  fi
+done
+
+# Fallback: create $HOME/.claude if nothing else worked
+if [ -z "$SETTINGS_DIR" ]; then
+  mkdir -p "$HOME/.claude" 2>/dev/null && [ -w "$HOME/.claude" ] && SETTINGS_DIR="$HOME/.claude"
+fi
+
+# Last resort: ephemeral outputs/ — warn the user that re-setup will be needed next session
+if [ -z "$SETTINGS_DIR" ]; then
+  SETTINGS_DIR=$(find /sessions -maxdepth 3 -path "*/mnt/outputs" -type d 2>/dev/null | head -1)
+  echo "⚠ No writable persistent directory found. Caching settings to $SETTINGS_DIR (ephemeral)."
+fi
+
+[ -z "$SETTINGS_DIR" ] && { echo "ERROR: no writable location for settings"; exit 1; }
+
+cat > "$SETTINGS_DIR/lc-mobile-qa-settings.json" << 'EOF'
 {
   "jira": {
     "cloudId": "<resolved-cloud-id>",
@@ -75,9 +108,10 @@ cat > "$MNT_CLAUDE/lc-mobile-qa-settings.json" << 'EOF'
   }
 }
 EOF
+echo "✓ Settings written to: $SETTINGS_DIR/lc-mobile-qa-settings.json"
 ```
 
-Confirm with the user: "Configuration saved. You won't need to do this again." Then proceed.
+Confirm with the user: "Configuration saved to `$SETTINGS_DIR`. You won't need to do this again." (Include the actual path so the user can spot if it ended up in an ephemeral location.) Then proceed.
 
 ---
 
@@ -165,77 +199,123 @@ Read `references/formatting.md` for exact openpyxl code patterns.
 
 ---
 
-## Step 6: Upload to Google Drive as a Native Google Sheet (Single Pass)
+## Step 6: Upload to Google Drive — Native Google Sheet in the Configured Folder
 
-**Goal:** produce exactly one file in Drive — a native Google Sheet, placed inside the configured folder. Do NOT upload the `.xlsx` as a separate Drive file and then convert; do it in a single converting upload.
+**Goal:** end with exactly one file in Drive — a native Google Sheet — inside the configured folder. Nothing in the Drive root, no leftover `.xlsx` in the folder.
 
-### Why a single pass
+### What this MCP can and can't do
 
-A previous version of this skill led to a two-call pattern (upload XLSX, then create a converted copy) in which the second call sometimes omitted `parentId`, causing the Google Sheet to land in the Drive root instead of the configured folder. Always follow the one-call recipe below.
+The Drive MCP's `create_file` does NOT auto-convert XLSX to Google Sheets — per its docs, only `text/csv` and `text/plain` are auto-converted. The `disableConversionToGoogleType` flag has no effect for XLSX. **Confirmed by behavior, not assumed.**
 
-### Recipe
+To get a native Google Sheet we therefore drive the upload through the Drive **web UI** via Claude in Chrome. The web UI honors the user's account-level "Convert uploads to Google Docs editor format" setting (in `drive.google.com/drive/settings`), which auto-converts XLSX to GSheets server-side when the upload happens through the UI. The setting must be enabled — verify with the user once if uncertain.
 
-1. Read the local `.xlsx` and base64-encode it:
+### Path A — Primary: Chrome MCP via Drive Web UI
 
-```bash
-B64=$(base64 -i "/sessions/<session>/mnt/outputs/<TICKET_ID>_TestCases.xlsx" | tr -d '\n')
-```
+1. **Preflight.** Check Claude in Chrome is connected by calling `mcp__Claude_in_Chrome__list_connected_browsers`. If no browser is connected, jump to **Path B**.
 
-2. Call **`mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file`** with ALL of these fields set explicitly — do not rely on defaults:
+2. **Set up a tab.** Call `tabs_context_mcp({ createIfEmpty: true })` to get the tab group. Call `tabs_create_mcp()` to claim a fresh tab; remember the returned `tabId`.
 
-| Field | Value | Why |
-|-------|-------|-----|
-| `title` | `"<TICKET_ID>_TestCases"` (no `.xlsx` suffix) | The result is a native Google Sheet, not an Office file |
-| `base64Content` | `$B64` from step 1 | The spreadsheet bytes |
-| `contentMimeType` | `"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"` | Tells Drive the source format |
-| `parentId` | `drive.folderId` from settings (Step 0) | **MANDATORY — never omit.** Omission is the root cause of the "lands in Drive root" bug |
-| `disableConversionToGoogleType` | `false` | Explicit; forces conversion to native Google Sheet on upload |
+3. **Navigate to the configured folder:**
 
-3. Capture the returned `id`, `mimeType`, and `parents` from the response — Step 6.5 depends on them.
+   ```
+   navigate(tabId, url=`https://drive.google.com/drive/folders/${drive.folderId}`)
+   ```
 
-> ⚠️ **Do not** chain a follow-up `copy_file` or a second `create_file` to "make it a Google Sheet". One converting upload is enough. A second call without `parentId` is what historically created a duplicate Google Sheet at Drive root.
+4. **Confirm the page is the right folder.** Call `get_page_text(tabId)`; the response should contain the folder name (read it from `drive.folderUrl` or scan the breadcrumb area). If Drive shows a login screen, stop and ask the user to sign in — do not attempt credential entry.
+
+5. **Locate the drag-drop file input.** Call `find(tabId, query="hidden file upload input for drag and drop")`. Drive exposes an `<input type="file" multiple>` element that drag-drop targets — you want that element's `ref`. If `find` returns multiple matches, prefer one whose attributes suggest the upload zone for the current folder view.
+
+6. **Upload via `file_upload`:**
+
+   ```
+   file_upload(tabId, ref=<input-ref>, paths=["/sessions/<session>/mnt/outputs/<TICKET_ID>_TestCases.xlsx"])
+   ```
+
+   This dispatches the file to Drive's upload handler. Because the Drive account has "Convert uploads" enabled, the result is a Google Sheet created **in the current folder**, not the root.
+
+7. **Wait for the upload to settle.** Poll the Drive MCP every ~5s for up to 60s:
+
+   ```
+   search_files query:
+     title contains '<TICKET_ID>_TestCases'
+     and mimeType = 'application/vnd.google-apps.spreadsheet'
+     and parentId = '<drive.folderId>'
+   ```
+
+   Stop polling as soon as a match returns. Capture its `id`, `name`, `mimeType`, `parents`, and `webViewLink`.
+
+8. **Close the tab** once verified: `tabs_close_mcp(tabId)`.
+
+### Path B — Fallback: Drive MCP upload (when Chrome MCP unavailable)
+
+If Step 1 above showed no browser, or any step in Path A fails after one retry, fall back to:
+
+1. Read the local `.xlsx` as base64 and call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
+   - `title`: `"<TICKET_ID>_TestCases.xlsx"` (keep the suffix — it stays XLSX)
+   - `base64Content`: base64 of the file
+   - `contentMimeType`: `"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
+   - `parentId`: `drive.folderId` (mandatory, never omit)
+   - `disableConversionToGoogleType`: `true` (explicit — we know conversion isn't supported here)
+
+2. Capture `id`, `mimeType`, `parents`, `webViewLink`. The result is an **XLSX** in the configured folder.
+
+3. In Step 7's confirmation, include a one-line manual conversion instruction:
+
+   > To convert to a native Google Sheet: open the file in Drive, then **File → Save as Google Sheets**. The converted copy lands in **My Drive** root — move it to the original folder via right-click → **Organize → Move**, then delete the `.xlsx`.
+
+   Be explicit that the manual conversion lands in root by default — don't promise auto-placement.
 
 ---
 
-## Step 6.5: Verify the Conversion (Mandatory)
+## Step 6.5: Verify the Final State (Mandatory)
 
-Before reporting success in Step 7, validate the upload produced exactly what was expected.
+Independent of which path ran, before reporting success in Step 7, confirm via Drive MCP that exactly the right file exists in the right place.
 
 1. Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__get_file_metadata` with the captured `fileId`.
 
-2. Assert ALL of:
-   - `mimeType == "application/vnd.google-apps.spreadsheet"` — confirms it converted
-   - `<configured-folderId>` appears in `parents` — confirms it landed in the right folder, not Drive root
-   - `name == "<TICKET_ID>_TestCases"` — confirms title is clean (no stray `.xlsx`)
+2. Assert based on which path ran:
 
-3. (Optional but recommended) Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__read_file_content` on the same `fileId` and check that both `"Test Cases"` and `"Block Summary"` sheet names appear in the returned text. This confirms structural conversion succeeded, not just the file type swap.
+   **Path A (Chrome MCP):**
+   - `mimeType == "application/vnd.google-apps.spreadsheet"`
+   - `<drive.folderId>` appears in `parents`
+   - `name == "<TICKET_ID>_TestCases"` or starts with that prefix (Drive may add a number suffix if a same-named file existed)
+
+   **Path B (Drive MCP fallback):**
+   - `mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"` (XLSX preserved — expected)
+   - `<drive.folderId>` appears in `parents`
+   - `name == "<TICKET_ID>_TestCases.xlsx"`
+
+3. (Path A only, optional) Call `read_file_content` on the `fileId` and check that `"Test Cases"` and `"Block Summary"` sheet names appear. This confirms the conversion preserved structure.
 
 ### If any assertion fails
 
-- Do NOT tell the user everything worked. Report which assertion failed and the actual value returned.
-- Present the local `.xlsx` via `mcp__cowork__present_files` so the user has a manual fallback they can re-upload themselves.
-- If `mimeType` is still an Office format, the conversion did not happen — retry once with `disableConversionToGoogleType: false` explicitly set, or surface the issue and let the user convert via the Drive UI ("File → Save as Google Sheets").
-- If `parents` does not contain the configured folder, show the actual `parents` array and the file URL so the user can move or delete it manually.
+- Do NOT report success. State which assertion failed and the actual value returned.
+- Present the local `.xlsx` via `mcp__cowork__present_files` as a fallback the user can manually upload.
+- If `parents` is wrong, show the actual `parents` array and the file URL so the user can move it.
 
 ---
 
-## Step 6.6: Handle Stale Duplicates from Older Versions
+## Step 6.6: Scan for Leftovers from Older Skill Versions
 
-If the user reports leftover files from previous runs (an extra Google Sheet at the Drive root, or a stray `.xlsx` in the target folder), scan for them:
+Versions before 0.6.1 sometimes left a duplicate Google Sheet at the Drive root (parentless `create_file` call). On every run, after a successful upload, scan for orphans for this ticket and surface them:
 
 ```
-# Stray XLSX uploads for this ticket
+# Strays at the Drive root (most common older-version artifact)
 search_files query:
-  title contains '<TICKET_ID>' and mimeType contains 'spreadsheetml'
+  title contains '<TICKET_ID>_TestCases'
+  and mimeType = 'application/vnd.google-apps.spreadsheet'
+  and parentId = 'root'
 
-# Stray Google Sheets at the Drive root for this ticket
+# Stray XLSX duplicates in the configured folder
 search_files query:
-  title contains '<TICKET_ID>' and mimeType = 'application/vnd.google-apps.spreadsheet' and parentId = 'root'
+  title contains '<TICKET_ID>_TestCases'
+  and mimeType contains 'spreadsheetml'
+  and parentId = '<drive.folderId>'
 ```
 
-Report any matches with their file URLs and ask the user whether to keep or delete them.
+Filter out the file you just uploaded (match against the captured `id`). List any other matches with their `webViewLink` URLs and ask: *"Found N older copy(ies) of this test case file. Want to clean them up? (You'll need to delete manually — see note below.)"*
 
-> ⚠️ **Known limitation — no auto-delete.** The current Drive MCP integration does NOT expose a `delete_file` or `trash_file` tool. The skill cannot delete files in Drive on its own. Show the URLs in chat and ask the user to delete via the Drive web UI. Do not promise auto-deletion the tool stack cannot deliver.
+> ⚠️ **Limitation:** the Drive MCP exposes no `delete_file` / `trash_file` tool. Cleanup is a manual user action via the Drive web UI. Do not promise auto-deletion.
 
 The local `.xlsx` at `/sessions/<session>/mnt/outputs/` does not need cleanup — Cowork session storage is ephemeral.
 
