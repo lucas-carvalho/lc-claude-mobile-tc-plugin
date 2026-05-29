@@ -110,6 +110,28 @@ After first-time setup, your settings are stored at `lc-mobile-qa-settings.json`
 
 On every run, the same locations are searched in order until the file is found. The plugin tells you the actual path after first-run setup so you can spot if it landed somewhere ephemeral. You can edit the file directly if you need to change your Jira board or Drive folder. See `config/settings.json.example` for the expected format.
 
+## Releasing a New Version
+
+Releases are created automatically by GitHub Actions whenever a `v*` tag is pushed.
+
+**Steps to release:**
+
+1. Bump `version` in `plugins/mobile-tc/.claude-plugin/plugin.json`
+2. Bump `metadata.version` in `plugins/mobile-tc/skills/generate-test-cases/SKILL.md`
+3. Add an entry to `CHANGELOG.md`
+4. Commit, tag, and push:
+
+```bash
+git add -p
+git commit -m "chore: bump version to 0.6.2"
+git tag v0.6.2
+git push && git push --tags
+```
+
+The Actions workflow (`.github/workflows/release.yml`) picks up the tag, extracts the matching section from `CHANGELOG.md`, and publishes the GitHub Release automatically. No manual steps needed after the push.
+
+> GitHub Actions is enabled by default on all GitHub repos (public and private). No additional setup is required — the workflow file committed to `.github/workflows/` is all it takes. The `GITHUB_TOKEN` used to create the release is injected automatically by GitHub; no secrets need to be configured. See [GitHub Actions quickstart](https://docs.github.com/en/actions/writing-workflows/quickstart) if you're unfamiliar with the system.
+
 ## Author
 
 Lucas Carvalho Silva — Telus Digital's Test Engineer

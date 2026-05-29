@@ -16,7 +16,13 @@
 - Initial local snapshot extracted from installed plugin
 
 ## How to bump the version
-1. Edit `version` in `.claude-plugin/plugin.json`
-2. Edit `metadata.version` in `skills/generate-test-cases/SKILL.md`
+1. Edit `version` in `plugins/mobile-tc/.claude-plugin/plugin.json`
+2. Edit `metadata.version` in `plugins/mobile-tc/skills/generate-test-cases/SKILL.md`
 3. Add an entry here
-4. Re-upload via Claude desktop: Settings → Plugins → Mobile TC by LC → Edit
+4. Commit, tag, and push — GitHub Actions creates the release automatically:
+   ```bash
+   git add -p
+   git commit -m "chore: bump version to X.Y.Z"
+   git tag vX.Y.Z
+   git push && git push --tags
+   ```
