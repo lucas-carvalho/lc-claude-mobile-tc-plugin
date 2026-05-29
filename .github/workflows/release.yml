@@ -23,29 +23,19 @@ jobs:
           VERSION="${TAG#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Extract release notes from CHANGELOG
-        id: notes
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          NOTES=$(awk -v ver="$VERSION" '
-            /^## \[/ {
-              if (capture) { exit }
-              if ($0 ~ "^## \\[" ver "\\]") { capture=1; next }
-            }
-            capture { print }
-          ' CHANGELOG.md)
-          {
-            echo "notes<<__RELEASE_NOTES_EOF__"
-            echo "$NOTES"
-            echo "__RELEASE_NOTES_EOF__"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (capture) { exit }
+              if ($0 ~ "^## \\[" ver "\\]") { capture=1; next }
+            }
+            capture { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "${{ steps.notes.outputs.notes }}" \
+            --notes-file /tmp/release-notes.md \
             --verify-tag
