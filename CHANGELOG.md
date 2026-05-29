@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.6.1] — current
+## [0.6.2] — current
+- **Automated GitHub Releases via GitHub Actions.** A `.github/workflows/release.yml` workflow now triggers on every `v*` tag push, extracts the matching CHANGELOG section, and publishes the GitHub Release automatically — no manual steps after `git push --tags`.
+- **README: new "Releasing a New Version" section** documenting the tag-push → Actions → Release flow for maintainers.
+- **CHANGELOG: release instructions updated** — replaced the stale "re-upload via Claude desktop" step with the new automated flow.
+
+## [0.6.1]
 - **Fix: Native Google Sheet now actually lands in the configured Drive folder.** v0.6.0 prescribed a single converting `create_file` call, but the Drive MCP doesn't auto-convert XLSX (only `text/csv` and `text/plain`), so the file ended up as XLSX. v0.6.1 routes the upload through Claude in Chrome and the Drive web UI, leveraging the account-level "Convert uploads" setting that converts XLSX → GSheet server-side on upload. The conversion now happens in-place in the target folder, with no Drive-root duplicate. **Requires the user to enable "Convert uploads to Google Docs editor format" at `drive.google.com/drive/settings`.**
 - **New Path B fallback.** When Claude in Chrome is unavailable, the skill falls back to a Drive-MCP-only path: uploads XLSX to the configured folder (no conversion), and surfaces an explicit manual-conversion instruction in Step 7. Honest about the limitation; no false success.
 - **Stale-duplicate scan now runs on every successful upload**, not just on user prompt. Finds older-version artifacts (Google Sheets at Drive root for this ticket) and lists them with URLs so the user can clean up manually.

@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.6.1"
+  version: "0.6.2"
   author: "Lucas Carvalho"
 ---
 
