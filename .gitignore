@@ -1,1 +1,32 @@
+# Plugin local config (real settings — example is committed)
 config/settings.json
+
+# Claude Code per-user state (personal allowlist, absolute paths)
+.claude/settings.local.json
+
+# macOS
+.DS_Store
+
+# Python (skill generates and runs .py scripts via openpyxl)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Generated test case spreadsheets — never commit real ticket output
+*_TestCases.xlsx
+*.xlsx
+
+# Patches / diffs created during local dev
+*.patch
+*.diff
+
+# Logs
+*.log
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~

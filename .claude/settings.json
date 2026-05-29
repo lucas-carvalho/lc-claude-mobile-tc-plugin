@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "lc-claude-mobile-test-cases-handler@lc-mobile-tc": true
+  }
+}
