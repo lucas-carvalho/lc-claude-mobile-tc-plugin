@@ -32,21 +32,28 @@ echo "⏱ Start: $(date '+%Y-%m-%d %H:%M:%S')"
 
 Before anything else, check if the plugin has been configured for this user.
 
-The settings file should live in a **persistent, writable** directory so it survives across sessions. Some Cowork session layouts mount `.claude/` as read-only — the discovery below tries multiple candidates and picks the first writable one. Do NOT hardcode a session name.
+**Primary source: the plugin's own `config/settings.json`.** This file lives alongside the installed plugin and survives across Cowork sessions. All other locations (`$HOME`, `/sessions/...`) are ephemeral in Cowork and must not be used as the write target.
 
 ```bash
-# Reading: try all known locations, take the first that has the file
+# Reading: plugin config/ is always the primary source
 SETTINGS=""
-for candidate in \
-    $(find /sessions -maxdepth 4 -name "lc-mobile-qa-settings.json" -path "*/mnt/.claude/*" 2>/dev/null) \
-    $(find /sessions -maxdepth 4 -name "lc-mobile-qa-settings.json" -path "*/mnt/outputs/*" 2>/dev/null) \
-    "$HOME/.claude/lc-mobile-qa-settings.json" \
-    "$HOME/.lc-mobile-qa-settings.json"; do
-  if [ -f "$candidate" ] && [ -s "$candidate" ]; then
-    SETTINGS="$candidate"
-    break
-  fi
-done
+
+# 1. Plugin config/ — persistent across Cowork sessions (preferred)
+PLUGIN_CONFIG=$(find /home /root /Users -maxdepth 6 \
+  -path "*/lc-claude-mobile-test-cases-handler/config/settings.json" 2>/dev/null | head -1)
+[ -f "$PLUGIN_CONFIG" ] && [ -s "$PLUGIN_CONFIG" ] && SETTINGS="$PLUGIN_CONFIG"
+
+# 2. Fallback: session-mounted plugin path variants
+if [ -z "$SETTINGS" ]; then
+  for candidate in \
+      $(find /sessions -maxdepth 6 -path "*/mobile-tc/config/settings.json" 2>/dev/null) \
+      $(find /sessions -maxdepth 6 -name "lc-mobile-qa-settings.json" 2>/dev/null); do
+    if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+      SETTINGS="$candidate"; break
+    fi
+  done
+fi
+
 [ -n "$SETTINGS" ] && cat "$SETTINGS"
 ```
 
@@ -57,7 +64,7 @@ done
 
 Tell the user:
 
-> "To get started, I need to configure two things: your Jira board and your Google Drive output folder. This only happens once."
+> "To get started, I need to configure two things: your Jira board and your Google Drive output folder. This only happens once — settings are saved to the plugin's config file and persist across sessions."
 
 Ask the following questions using AskUserQuestion:
 
@@ -68,33 +75,16 @@ Ask the following questions using AskUserQuestion:
 Once the user provides both:
 - Derive `jira.site` from the board URL (e.g. `yourorg.atlassian.net`)
 - Resolve `jira.cloudId` via Atlassian MCP if not determinable from the URL alone
-- Pick the **first writable** persistent directory and write the settings there. Fail loud, never silent:
+- Write to the plugin's `config/settings.json` — **this is the only write target**. Do not write to `$HOME` or ephemeral session paths:
 
 ```bash
-# Writing: pick the first writable persistent candidate
-SETTINGS_DIR=""
-for candidate in \
-    $(find /sessions -maxdepth 3 -path "*/mnt/.claude" -type d 2>/dev/null) \
-    "$HOME/.claude"; do
-  if [ -d "$candidate" ] && [ -w "$candidate" ]; then
-    SETTINGS_DIR="$candidate"; break
-  fi
-done
+# Writing: plugin config/ only — persistent across Cowork sessions
+CONFIG_PATH=$(find /home /root /Users /sessions -maxdepth 6 \
+  -path "*/lc-claude-mobile-test-cases-handler/config" -type d 2>/dev/null | head -1)
 
-# Fallback: create $HOME/.claude if nothing else worked
-if [ -z "$SETTINGS_DIR" ]; then
-  mkdir -p "$HOME/.claude" 2>/dev/null && [ -w "$HOME/.claude" ] && SETTINGS_DIR="$HOME/.claude"
-fi
+[ -z "$CONFIG_PATH" ] && { echo "ERROR: could not locate plugin config/ directory"; exit 1; }
 
-# Last resort: ephemeral outputs/ — warn the user that re-setup will be needed next session
-if [ -z "$SETTINGS_DIR" ]; then
-  SETTINGS_DIR=$(find /sessions -maxdepth 3 -path "*/mnt/outputs" -type d 2>/dev/null | head -1)
-  echo "⚠ No writable persistent directory found. Caching settings to $SETTINGS_DIR (ephemeral)."
-fi
-
-[ -z "$SETTINGS_DIR" ] && { echo "ERROR: no writable location for settings"; exit 1; }
-
-cat > "$SETTINGS_DIR/lc-mobile-qa-settings.json" << 'EOF'
+cat > "$CONFIG_PATH/settings.json" << 'EOF'
 {
   "jira": {
     "cloudId": "<resolved-cloud-id>",
@@ -108,10 +98,25 @@ cat > "$SETTINGS_DIR/lc-mobile-qa-settings.json" << 'EOF'
   }
 }
 EOF
-echo "✓ Settings written to: $SETTINGS_DIR/lc-mobile-qa-settings.json"
+echo "✓ Settings written to: $CONFIG_PATH/settings.json"
 ```
 
-Confirm with the user: "Configuration saved to `$SETTINGS_DIR`. You won't need to do this again." (Include the actual path so the user can spot if it ended up in an ephemeral location.) Then proceed.
+Confirm with the user: "Configuration saved to `$CONFIG_PATH/settings.json`. This persists across Cowork sessions — you won't need to do this again." Then proceed.
+
+### Chrome MCP preflight (check once at startup)
+
+Before Step 1, check whether Claude in Chrome is available. This determines the Drive upload path used in Step 6 and avoids a late surprise.
+
+```
+mcp__Claude_in_Chrome__list_connected_browsers
+```
+
+- If it **returns at least one browser**: note `CHROME_AVAILABLE=true`. Path A will be used in Step 6.
+- If it **returns empty or errors**: note `CHROME_AVAILABLE=false` and inform the user upfront:
+
+  > "Claude in Chrome is not connected. The spreadsheet will be uploaded as an XLSX file (Path B). To get a native Google Sheet instead, open Claude in Chrome in your browser before the next run."
+
+  Proceed normally — Path B is a valid fallback, just set the expectation early.
 
 ---
 
@@ -173,14 +178,29 @@ Read `references/methodology.md` before generating any test cases.
 
 Key rules:
 - **No fixed count** — the number of TCs depends entirely on the ticket complexity and type.
-- **AC-oriented** — aim to cover every Acceptance Criterion with at least one TC. Flag any uncovered ACs at the end; do not block generation because of missing or incomplete ACs.
-- **Gherkin format** — write every TC description as `Given / When / Then` (see methodology.md for the full spec). This is the default format, not optional.
+- **AC-oriented (hard requirement)** — every TC must reference at least one AC in the Notes field (`Ref: AC-N`). If the ticket has no ACs, mark each TC with `Assumption` instead. A TC with neither is invalid and must not be included.
+- **Gherkin format** — write every TC description as `Given / When / Then` (see methodology.md for the full spec and anti-patterns). This is the default format, not optional.
+- **`Given` describes user context**, not internal variables — `Given the user has a course in progress with the exam now available`, not `Given isPreTest=false, examAvailable=true`.
+- **`Then` describes what the user sees**, not what the code does — `Then the "Start Exam" button is shown`, not `Then the state is updated`.
 - **Functional/scenario perspective** — group TCs by screen state or user scenario, not by individual variable or unit.
 - **Block naming** — use plain English names without emoji prefixes; color coding is applied through spreadsheet formatting only (see methodology.md Color Conventions).
-- Each TC must have: ID (`TC-01`, `TC-02`...), short scenario title, Gherkin description, notes (mock data, preconditions, known gaps), and an automatable classification (`Yes`, `No`, or `-`).
+- Each TC must have: ID (`TC-01`, `TC-02`...), short scenario title, Gherkin description, notes (AC reference or `Assumption`, mock name, known gaps), and an automatable classification (`Yes`, `No`, or `-`).
+- **Mocks are derived from `Given` clauses** — scan all `Given` preconditions after TC generation; group by shared state; name mocks by user scenario (see methodology.md "How to Derive Mocks from TCs").
 - Include a **non-functional quality block** when relevant (see methodology.md for mobile-layer scope).
 - Always end with a mock checklist block (`BLOCK N — Mock Checklist`) and an AC coverage summary.
 - **All TC content must be in English** — scenario titles, Gherkin descriptions, notes, and mock names.
+
+### AC Coverage Gate — required before Step 5
+
+After generating all TCs:
+
+1. List every AC extracted in Step 2 (AC-1, AC-2...).
+2. Confirm each AC is referenced by at least one TC (`Ref: AC-N` in Notes).
+3. For any uncovered AC, surface it explicitly to the user:
+   > "AC-N has no TC covering it. Should I generate a TC for it, mark it as out-of-scope, or flag it as a coverage gap?"
+4. **Do not proceed to Step 5 until every AC has been resolved** — either covered, explicitly scoped out, or recorded as a known gap.
+
+This gate ensures the final spreadsheet reflects deliberate coverage decisions, not accidental omissions.
 
 ---
 
@@ -211,7 +231,7 @@ To get a native Google Sheet we therefore drive the upload through the Drive **w
 
 ### Path A — Primary: Chrome MCP via Drive Web UI
 
-1. **Preflight.** Check Claude in Chrome is connected by calling `mcp__Claude_in_Chrome__list_connected_browsers`. If no browser is connected, jump to **Path B**.
+1. **Route check.** If `CHROME_AVAILABLE=false` (set in Step 0), skip directly to **Path B** — no need to recheck.
 
 2. **Set up a tab.** Call `tabs_context_mcp({ createIfEmpty: true })` to get the tab group. Call `tabs_create_mcp()` to claim a fresh tab; remember the returned `tabId`.
 

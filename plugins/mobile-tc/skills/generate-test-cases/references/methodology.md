@@ -47,30 +47,66 @@ And  lesson 3 displays the "START COURSE" button in disabled gray
 ```
 
 **Rules:**
-- `Given` sets the mock state or precondition — be specific (e.g. `courseCompleted=false`, `hasAttempted=true`)
-- `When` is always a user action or a screen event, not a variable change
-- `Then` always describes what the user *sees*, not what the code *does*
+- `Given` sets the mock state or precondition — describe the user situation, not an internal variable (e.g. `Given the user is in the middle of a course with the exam now available` — not `Given isPreTest=false, examAvailable=true`)
+- `When` is always a user action or a screen event — never an API response or internal state change
+- `Then` always describes what the user *sees* on the screen — never what the code *does* internally
 - If a TC has no user action (pure display state), use: `When the user opens / views the screen`
 - Keep each clause on its own line for readability in the cell (wrap text is enabled)
+- Each `Given` precondition maps to a mock — use the same user-scenario language in the Mock Checklist block
+
+### Anti-patterns to avoid
+
+| ❌ Wrong | ✅ Correct |
+|----------|-----------|
+| `Given isCompleted=true` | `Given the user has completed all course lessons` |
+| `When the API returns 200` | `When the user taps the "Start Course" button` |
+| `Then the state is updated` | `Then the course card displays the "Continue" button` |
+| `Given the user is logged in` (vague) | `Given the user is logged in with an active subscription and no completed courses` |
+| `Then the reducer updates the store` | `Then the progress bar advances to 100%` |
+
+### When to use `And` vs. create a new TC
+
+Use `And` to describe multiple elements visible **on the same screen at the same time**:
+
+```
+Then the header shows "Course Overview"
+And  the progress bar is at 60%
+And  the CTA button shows "Continue"
+```
+
+Create a **new TC** when:
+- The user must perform a second action to see the next result
+- The scenario tests a different screen or state from the previous step
+- Readability degrades (more than 4 `Then/And` clauses)
+- The `Given` context changes between outcomes
 
 ---
 
-## AC Coverage Tracking
+## AC Coverage Rule (Hard Requirement)
 
-Before generating TCs, extract all Acceptance Criteria from the ticket. Number them (AC-1, AC-2...).
+Every TC **must** reference at least one AC in the **Notes / Mock** field:
 
-As TCs are generated, tag each one internally with the AC it covers. After generation, produce a summary:
+- Format: `Ref: AC-1` or `Ref: AC-1, AC-3` for multiple ACs
+- If the ticket has no formal ACs: mark the TC with `Assumption` instead of a `Ref:` tag
+- A TC with neither `Ref:` nor `Assumption` is **invalid** — do not include it in the spreadsheet
+
+**Orphan TCs are not allowed.** If a TC cannot be traced to an AC or a clear description assumption, remove it or surface a new AC candidate to the user before proceeding.
+
+### AC-TC tagging process
+
+1. Before generating TCs, extract all Acceptance Criteria from the ticket and number them (AC-1, AC-2...).
+2. As each TC is written, tag it immediately with `Ref: AC-N` in Notes.
+3. One AC may be covered by multiple TCs. One TC may reference multiple ACs.
+4. After all TCs are generated, produce a coverage summary:
 
 ```
 AC Coverage:
-  AC-1 → TC-01, TC-03
-  AC-2 → TC-05
-  AC-3 → ⚠️ Not covered — no TC generated for this AC
+  AC-1 → TC-01, TC-03  ✅
+  AC-2 → TC-05         ✅
+  AC-3 → ⚠️ No TC covers this AC — surface to user before proceeding
 ```
 
-Any uncovered AC must be flagged to the user. Do not silently skip ACs.
-
-If the ticket has no formal ACs, note which TCs are based on description assumptions vs. explicit requirements.
+Any uncovered AC must be escalated to the user. The user decides: generate a new TC, mark as out-of-scope, or flag as a gap. **Do not silently skip uncovered ACs.**
 
 ---
 
@@ -191,11 +227,33 @@ Include when relevant; omit when the ticket is purely data/logic with no UX surf
 
 ---
 
+## How to Derive Mocks from TCs
+
+The Mock Checklist block must be **derived from the TCs**, not invented independently. Process:
+
+1. **Scan every `Given` clause** across all TCs — each unique precondition that requires prepared data = one mock entry.
+2. **Group by shared state**: TCs that share the same `Given` context share the same mock. Reference the mock name from each TC's Notes field: `Mock: "User with in-progress course"`.
+3. **Name each mock by user scenario**, not by variable combination:
+   - ✅ `User with in-progress course and exam available`
+   - ❌ `isProgress=true, hasExam=true, orderId=5`
+4. **List required fields** per mock — only the fields the developer needs to set to reproduce the `Given` state (e.g. `status="IN_PROGRESS", examAvailable=true, orderId=5`).
+5. **Cross-reference TC IDs** so the developer knows which TCs each mock enables.
+
+### Mock Checklist row format
+
+Each row in the Mock Checklist block uses:
+- **Scenario Title**: Mock name in user-scenario language
+- **Description**: List of TC IDs that use this mock (e.g. `Used by: TC-04, TC-07, TC-08`)
+- **Notes / Mock**: Required fields and values (e.g. `status="IN_PROGRESS", examAvailable=true`)
+
+---
+
 ## Mock Checklist Block (Final Block)
 
 Always add a final block (`BLOCK N — Mock Checklist`) listing the mock data sets the developer must implement. Each item should include:
-- A descriptive mock name
+- A descriptive mock name (user-scenario language — see derivation rules above)
 - The key variables required (e.g. `isPreTest=true, orderId=0`)
+- The TC IDs that depend on this mock
 
 ---
 
