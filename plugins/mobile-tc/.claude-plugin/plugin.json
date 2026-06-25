@@ -1,7 +1,7 @@
 {
   "name": "lc-claude-mobile-test-cases-handler",
   "displayName": "Mobile TC by LC",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Generates formatted QA test case spreadsheets from Jira tickets on a mobile project board, saving them directly to a Google Drive folder of your choice.",
   "author": {
     "name": "Lucas Carvalho Silva"

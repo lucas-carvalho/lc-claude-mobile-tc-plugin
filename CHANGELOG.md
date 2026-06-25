@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.3] — current
+- **Stronger Gherkin rules.** Added anti-patterns table (`Given isX=true` → user-scenario language), `And`-vs-new-TC split guidance, and explicit `Given`/`Then` semantics (user context, not internal variables/state).
+- **AC-TC binding upgraded to hard requirement.** Every TC must carry `Ref: AC-N` in Notes (or `Assumption` when the ticket has no ACs). Orphan TCs are invalid. An AC Coverage Gate now blocks spreadsheet generation (Step 5) until every uncovered AC is resolved by the user.
+- **Mock derivation process.** Mock Checklist is now derived from `Given` clauses across all TCs — grouped by shared state, named by user scenario, cross-referenced with TC IDs.
+- **Settings persistence fixed.** Write target is now the plugin's own `config/settings.json` (persistent across Cowork sessions). Removed `$HOME/.claude` and ephemeral `/sessions/...` paths as write candidates.
+- **Chrome MCP preflight moved to Step 0.** `list_connected_browsers` runs at startup; user is informed immediately if Path B (XLSX fallback) will be used — no late surprise at Step 6.
+- **Lint config for Cursor/VSCode.** Added `.markdownlint.json` (`"default": false`) and `.vscode/settings.json` to silence markdownlint warnings on skill/methodology files.
+
 ## [0.6.2] — current
 - **Automated GitHub Releases via GitHub Actions.** A `.github/workflows/release.yml` workflow now triggers on every `v*` tag push, extracts the matching CHANGELOG section, and publishes the GitHub Release automatically — no manual steps after `git push --tags`.
 - **README: new "Releasing a New Version" section** documenting the tag-push → Actions → Release flow for maintainers.
