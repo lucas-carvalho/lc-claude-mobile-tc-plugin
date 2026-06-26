@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.6.5"
+  version: "1.0.0"
   author: "Lucas Carvalho"
 ---
 
@@ -41,14 +41,33 @@ Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__search_files` with:
 query: title = 'lc-mobile-qa-settings.json'
 ```
 
-- If **one result is returned**: call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__read_file_content` with its `id` and parse the JSON. Extract and hold in memory for the entire session: `jira.cloudId`, `jira.site`, `jira.projectKey`, and `drive.folderId`. **Do not ask the user about their Jira board configuration or Drive output folder — these are already known and will be used directly in Steps 2 and 6 respectively.** The specific ticket to test (ID or URL) is always provided by the user per invocation and is handled independently in Step 1 — it is never stored in settings. Proceed to Step 1.
+- If **one result is returned**: call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__read_file_content` with its `id` and parse the JSON. Extract and hold in memory for the entire session: `jira.cloudId`, `jira.site`, `jira.projectKey`, `drive.folderId`, and `gcloud.configured`. **Do not ask the user about their Jira board configuration or Drive output folder — these are already known and will be used directly in Steps 2 and 6 respectively.** The specific ticket to test (ID or URL) is always provided by the user per invocation and is handled independently in Step 1 — it is never stored in settings.
+
+  **After loading settings, immediately check `gcloud.configured`:**
+  - If `gcloud.configured` is `false` or the `gcloud` key is missing: **stop here** and tell the user:
+
+    > "⚠️ **This plugin requires `gcloud` (Google Cloud CLI) to upload spreadsheets to Drive.**
+    >
+    > The upload path depends on a local `gcloud` installation authenticated with a Google account that has access to your Drive folder. Without it, the plugin cannot save the generated spreadsheet.
+    >
+    > **Setup steps:**
+    > 1. Install: `brew install --cask google-cloud-sdk`
+    > 2. Authenticate with Drive access: `gcloud auth login --enable-gdrive-access`
+    > 3. Verify: `gcloud auth print-access-token` should return a token
+    >
+    > Once done, let me know and I'll update your settings file to mark `gcloud` as configured, then we can proceed."
+
+    Do not continue to Step 1 until the user confirms `gcloud` is set up. When they confirm, update the settings file to set `gcloud.configured: true` and `gcloud.account` to the authenticated account (ask the user for the account email, or run `gcloud config get-value account` to retrieve it), then proceed.
+
+  - If `gcloud.configured` is `true`: proceed to Step 1.
+
 - If **no result is returned**: run **First-Run Setup** below before proceeding.
 
 ### First-Run Setup
 
 Tell the user:
 
-> "I need to configure two things before we start: your Jira board and your Google Drive output folder.
+> "I need to configure a few things before we start: your Jira board, your Google Drive output folder, and the `gcloud` CLI used to upload the generated spreadsheet.
 >
 > I'll save these settings as a file called **`lc-mobile-qa-settings.json`** in the root of your Google Drive. This file is what I'll look for at the start of every future session — so you won't need to configure this again."
 
@@ -58,7 +77,11 @@ Ask the following questions using AskUserQuestion:
 
 2. **Google Drive folder** — Ask for the URL or folder ID of the Google Drive folder where spreadsheets should be saved. Parse the folder ID from a Drive URL if provided (the segment after `/folders/`).
 
-Once the user provides both:
+3. **gcloud setup** — Ask: "Is `gcloud` installed and authenticated on your machine? (Run `gcloud auth print-access-token` to verify — it should return a token, not an error.)"
+   - If yes: ask for the authenticated account email, or run `gcloud config get-value account` to retrieve it.
+   - If no: show the setup instructions above and wait for the user to complete setup before continuing.
+
+Once the user provides all three:
 - Derive `jira.site` from the board URL (e.g. `yourorg.atlassian.net`)
 - Resolve `jira.cloudId` via Atlassian MCP if not determinable from the URL alone
 - Create the settings file in Drive root via `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
@@ -78,6 +101,10 @@ Once the user provides both:
   "drive": {
     "folderId": "<folder-id>",
     "folderUrl": "<full-drive-url-if-provided>"
+  },
+  "gcloud": {
+    "configured": true,
+    "account": "<authenticated-google-account-email>"
   }
 }
 ```
@@ -176,41 +203,96 @@ This gate ensures the final spreadsheet reflects deliberate coverage decisions, 
 
 ## Step 5: Generate the Spreadsheet
 
-Read `references/formatting.md` for exact openpyxl code patterns.
+Read `references/formatting.md` for exact xlsxwriter code patterns.
 
 1. Write a Python script that encodes the generated TCs using the template in `references/formatting.md`.
-2. Install openpyxl if needed: `pip install openpyxl --break-system-packages`
+2. Install xlsxwriter if needed: `pip install xlsxwriter --break-system-packages`
 3. Run the script via Bash to produce the `.xlsx` file.
-4. Save the output to: `/sessions/<session-name>/mnt/outputs/<TICKET_ID>_TestCases.xlsx`
-   - Determine the current session path dynamically — do not hardcode a session name.
-5. Present the file to the user with `mcp__cowork__present_files`.
+4. Save the output to: `/tmp/<TICKET_ID>_TestCases.xlsx`
 
 **Naming**: `<TICKET_ID>_TestCases.xlsx` — e.g. `PROJ-1234_TestCases.xlsx`.
 
 ---
 
-## Step 6: Upload to Google Drive — XLSX in the Configured Folder
+## Step 6: Upload to Google Drive — Convert to Native Google Sheet
 
-### What this MCP can and can't do
+Upload the `.xlsx` via the Drive API using `gcloud` credentials. This converts the file server-side to a native Google Sheet in the configured folder — no manual conversion needed.
 
-The Drive MCP's `create_file` does NOT auto-convert XLSX to Google Sheets — per its docs, only `text/csv` and `text/plain` are auto-converted. The `disableConversionToGoogleType` flag has no effect for XLSX. **Confirmed by behavior, not assumed.**
+`drive.folderId` was loaded from settings in Step 0 — do not ask the user where to save the file.
 
-Upload the `.xlsx` to the configured Drive folder via the Drive MCP.
+### 6.1 — Upload and convert to Google Sheet
 
-`drive.folderId` was loaded from settings in Step 0 — do not ask the user where to save the file. This folder is the spreadsheet output destination and is distinct from the Drive root where `lc-mobile-qa-settings.json` lives.
+```bash
+TOKEN=$(gcloud auth print-access-token)
+curl -s -X POST \
+  "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "metadata={\"name\":\"<TICKET_ID>_TestCases\",\"mimeType\":\"application/vnd.google-apps.spreadsheet\",\"parents\":[\"<drive.folderId>\"]};type=application/json;charset=UTF-8" \
+  -F "file=@/tmp/<TICKET_ID>_TestCases.xlsx;type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+```
 
-1. Read the local `.xlsx` as base64 and call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
-   - `title`: `"<TICKET_ID>_TestCases.xlsx"` (keep the suffix)
-   - `base64Content`: base64 of the file
-   - `contentMimeType`: `"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
-   - `parentId`: `drive.folderId` (mandatory, never omit — this is the output folder, not the Drive root)
-   - `disableConversionToGoogleType`: `true`
+- `name` has **no `.xlsx` suffix** — the result is a native Google Sheet
+- `mimeType: application/vnd.google-apps.spreadsheet` triggers server-side conversion
+- `parents` uses `drive.folderId` from settings — the file lands directly in the configured folder
 
-2. Capture `id`, `mimeType`, `parents`, `webViewLink`. The result is an **XLSX** in the configured folder.
+Capture the `id` from the JSON response. On success, `mimeType` will be `application/vnd.google-apps.spreadsheet`.
 
-3. In Step 7's confirmation, include a one-line manual conversion instruction:
+### 6.2 — Fetch the "Test Cases" sheet ID
 
-   > To convert to a native Google Sheet: open the file in Drive, then **File → Save as Google Sheets**. The converted copy lands in **My Drive** root — move it to the original folder via right-click → **Organize → Move**, then delete the `.xlsx`.
+The spreadsheet's internal sheet IDs are assigned by Google on conversion and are not predictable. Fetch them before applying data validation:
+
+```bash
+SPREADSHEET_ID="<id from 6.1>"
+curl -s "https://sheets.googleapis.com/v4/spreadsheets/$SPREADSHEET_ID?fields=sheets.properties" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)"
+```
+
+Extract the `sheetId` for the sheet titled `"Test Cases"` from the response.
+
+### 6.3 — Apply native checkboxes via Sheets API
+
+The Python script in Step 5 produces a `checkbox_rows` list — the 1-indexed Excel row numbers of every TC row and every Mock row (block separator rows, sub-header rows, and AC Coverage rows are excluded). Use this list to apply a `BOOLEAN` data validation (native Google Sheets checkbox) to column A of those rows only:
+
+```python
+import json, subprocess
+
+# checkbox_rows is the list produced by the Step 5 script (1-indexed)
+SPREADSHEET_ID = "<id from 6.1>"
+SHEET_ID       = <sheetId from 6.2>
+
+requests = []
+for r in checkbox_rows:
+    ri = r - 1   # Sheets API is 0-indexed
+    requests.append({
+        "setDataValidation": {
+            "range": {
+                "sheetId": SHEET_ID,
+                "startRowIndex": ri, "endRowIndex": ri + 1,
+                "startColumnIndex": 0, "endColumnIndex": 1
+            },
+            "rule": {
+                "condition": {"type": "BOOLEAN"},
+                "strict": True,
+                "showCustomUi": True
+            }
+        }
+    })
+
+body = json.dumps({"requests": requests})
+# write to temp file and call via curl, or use subprocess:
+with open("/tmp/sheets_checkbox_req.json", "w") as f:
+    f.write(body)
+```
+
+```bash
+curl -s -X POST \
+  "https://sheets.googleapis.com/v4/spreadsheets/$SPREADSHEET_ID:batchUpdate" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d @/tmp/sheets_checkbox_req.json
+```
+
+A successful response returns one empty `{}` reply per row. The `drive` scope granted by `gcloud auth login --enable-gdrive-access` covers the Sheets API — no additional authentication is required.
 
 ---
 
@@ -221,14 +303,13 @@ Before reporting success in Step 7, confirm via Drive MCP that the file is in th
 1. Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__get_file_metadata` with the captured `fileId`.
 
 2. Assert:
-   - `mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
+   - `mimeType == "application/vnd.google-apps.spreadsheet"`
    - `<drive.folderId>` appears in `parents`
-   - `name == "<TICKET_ID>_TestCases.xlsx"`
+   - `name == "<TICKET_ID>_TestCases"` (no `.xlsx` suffix — it is a native Google Sheet)
 
 ### If any assertion fails
 
 - Do NOT report success. State which assertion failed and the actual value returned.
-- Present the local `.xlsx` via `mcp__cowork__present_files` as a fallback the user can manually upload.
 - If `parents` is wrong, show the actual `parents` array and the file URL so the user can move it.
 
 ---
@@ -255,7 +336,7 @@ Filter out the file you just uploaded (match against the captured `id`). List an
 
 > ⚠️ **Limitation:** the Drive MCP exposes no `delete_file` / `trash_file` tool. Cleanup is a manual user action via the Drive web UI. Do not promise auto-deletion.
 
-The local `.xlsx` at `/sessions/<session>/mnt/outputs/` does not need cleanup — Cowork session storage is ephemeral.
+The local `.xlsx` at `/tmp/` does not need cleanup — it is a temporary file.
 
 ---
 

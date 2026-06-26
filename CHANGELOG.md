@@ -1,6 +1,14 @@
 # Changelog
 
-## [0.6.5] — current
+## [1.0.0] — current
+- **Upload rewritten — gcloud + Drive API, native Google Sheet output.** Replaced the Drive MCP base64 upload (which truncated files >13 KB and produced XLSX) with a `gcloud auth print-access-token` + Drive API multipart upload using `mimeType: application/vnd.google-apps.spreadsheet`. The file is converted server-side on upload and lands directly in the configured folder as a native Google Sheet — no manual conversion step.
+- **gcloud is now a required dependency.** The plugin declares itself non-functional if `gcloud.configured` is missing or `false` in settings. Step 0 stops immediately and walks the user through `brew install --cask google-cloud-sdk` + `gcloud auth login --enable-gdrive-access` before proceeding.
+- **Settings schema extended with `gcloud` block.** `lc-mobile-qa-settings.json` now includes `gcloud: { configured: true, account: "..." }`. First-run setup and the gcloud-missing recovery path both write this block.
+- **Spreadsheet generator migrated from openpyxl to xlsxwriter.** openpyxl generated `t="inlineStr"` cells without `sharedStrings.xml`, which Google Sheets' XLSX viewer could not render (blank cells). xlsxwriter generates proper `t="s"` shared-string references. Output path changed from `/sessions/.../mnt/outputs/` to `/tmp/`.
+- **Native checkboxes in column A via Sheets API.** After uploading, Step 6 fetches the internal sheet ID and calls `spreadsheets.batchUpdate` with `condition.type = BOOLEAN` on the exact TC and Mock rows tracked by the script (`checkbox_rows`). AC Coverage rows are excluded. This requires no extra authentication — the `drive` scope from `gcloud auth login --enable-gdrive-access` covers the Sheets API.
+- **Formatting fixes:** Mock Key Variables rows now use `\n` to separate the "Used by: TC-XX" list from key variable descriptions, and auto-expand height (no fixed row height). AC Coverage Status column merges E:H — no empty styled cells in G/H. Empty separator row between TCs and Mock block is fully unstyled.
+
+## [0.6.5]
 - **Settings persistence rewritten — now stored in Google Drive.** All previous approaches (plugin `config/`, `mnt/.claude/`, `$HOME/.claude/`) failed because both Claude Code local and Cowork sessions use short-lived sandbox environments with no shared filesystem between runs. Settings are now saved as `lc-mobile-qa-settings.json` in the root of the user's Google Drive via the Drive MCP. On every run, Step 0 searches Drive for this file before asking the user anything. First-run setup explicitly tells the user what file is being created and where, so they know what to expect on the next session.
 
 ## [0.6.4]
