@@ -22,13 +22,7 @@ On the first run, the plugin will ask you two questions:
 1. **Your Jira board URL** — e.g. `https://yourorg.atlassian.net/jira/software/c/projects/MYPROJECT/boards/123`
 2. **Your Google Drive output folder** — the URL or folder ID where spreadsheets should be saved
 
-Your answers are saved to the first writable persistent location available — the plugin tries, in order:
-
-1. A `mnt/.claude/` directory under the current Cowork session
-2. `$HOME/.claude/` (typical for local agent mode)
-3. A `mnt/outputs/` directory (ephemeral — cleared between sessions; only used as last resort)
-
-The chosen path is printed back to you after first-run setup so you can see if it landed somewhere persistent or ephemeral. See [Configuration File](#configuration-file) for the file format.
+Your answers are saved as a file called **`lc-mobile-qa-settings.json`** in the root of your Google Drive (via the Drive MCP). At the start of every future session the plugin searches Drive for this file automatically — no re-configuration needed, regardless of whether you're using Claude Code local or Cowork. See [Configuration File](#configuration-file) for the file format.
 
 ## How to Use
 
@@ -87,13 +81,9 @@ The plugin surfaces quality signals before generating TCs:
 
 ## Configuration File
 
-After first-time setup, your settings are stored at `lc-mobile-qa-settings.json` in the first writable persistent directory found at run time. The discovery order is:
+After first-time setup, your settings are stored as **`lc-mobile-qa-settings.json`** in the root of your Google Drive. The plugin finds it at the start of every session via a Drive MCP search — no local filesystem paths involved, so it works identically in Claude Code local and Cowork.
 
-1. `<cowork-session>/mnt/.claude/` (typical for Cowork remote sessions where the mount is writable)
-2. `$HOME/.claude/` (typical for local agent mode, or when the Cowork `.claude` mount is read-only)
-3. `<cowork-session>/mnt/outputs/` (last-resort fallback — ephemeral, cleared between sessions; the plugin will warn explicitly if it lands here)
-
-On every run, the same locations are searched in order until the file is found. The plugin tells you the actual path after first-run setup so you can spot if it landed somewhere ephemeral. You can edit the file directly if you need to change your Jira board or Drive folder. See `config/settings.json.example` for the expected format.
+To change your Jira board or Drive output folder, edit the file directly in Drive or delete it and let the plugin re-run first-time setup on the next session. See `config/settings.json.example` for the expected format.
 
 ## Releasing a New Version
 

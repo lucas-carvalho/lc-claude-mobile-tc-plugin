@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.6.4] — current
+## [0.6.5] — current
+- **Settings persistence rewritten — now stored in Google Drive.** All previous approaches (plugin `config/`, `mnt/.claude/`, `$HOME/.claude/`) failed because both Claude Code local and Cowork sessions use short-lived sandbox environments with no shared filesystem between runs. Settings are now saved as `lc-mobile-qa-settings.json` in the root of the user's Google Drive via the Drive MCP. On every run, Step 0 searches Drive for this file before asking the user anything. First-run setup explicitly tells the user what file is being created and where, so they know what to expect on the next session.
+
+## [0.6.4]
 - **Removed Chrome MCP upload path.** Claude in Chrome is unavailable in enterprise org environments that restrict browser extensions. The Drive MCP upload (previously Path B / fallback) is now the sole upload path — no preflight check, no Path A logic, no dead code. The Step 7 confirmation includes a one-line manual conversion instruction (XLSX → Google Sheet via File → Save as Google Sheets).
 
 ## [0.6.3]

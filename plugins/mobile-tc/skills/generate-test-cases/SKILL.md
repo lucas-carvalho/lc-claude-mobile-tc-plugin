@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.6.4"
+  version: "0.6.5"
   author: "Lucas Carvalho"
 ---
 
@@ -32,39 +32,25 @@ echo "⏱ Start: $(date '+%Y-%m-%d %H:%M:%S')"
 
 Before anything else, check if the plugin has been configured for this user.
 
-**Primary source: the plugin's own `config/settings.json`.** This file lives alongside the installed plugin and survives across Cowork sessions. All other locations (`$HOME`, `/sessions/...`) are ephemeral in Cowork and must not be used as the write target.
+**Settings are stored as a JSON file in Google Drive** — this is the only location that persists reliably across both Claude Code local sessions and Cowork sessions (which each get a fresh sandbox with no shared filesystem). The Drive MCP is used to both read and write this file.
 
-```bash
-# Reading: plugin config/ is always the primary source
-SETTINGS=""
+### Reading: search Drive for an existing settings file
 
-# 1. Plugin config/ — persistent across Cowork sessions (preferred)
-PLUGIN_CONFIG=$(find /home /root /Users -maxdepth 6 \
-  -path "*/lc-claude-mobile-test-cases-handler/config/settings.json" 2>/dev/null | head -1)
-[ -f "$PLUGIN_CONFIG" ] && [ -s "$PLUGIN_CONFIG" ] && SETTINGS="$PLUGIN_CONFIG"
-
-# 2. Fallback: session-mounted plugin path variants
-if [ -z "$SETTINGS" ]; then
-  for candidate in \
-      $(find /sessions -maxdepth 6 -path "*/mobile-tc/config/settings.json" 2>/dev/null) \
-      $(find /sessions -maxdepth 6 -name "lc-mobile-qa-settings.json" 2>/dev/null); do
-    if [ -f "$candidate" ] && [ -s "$candidate" ]; then
-      SETTINGS="$candidate"; break
-    fi
-  done
-fi
-
-[ -n "$SETTINGS" ] && cat "$SETTINGS"
+Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__search_files` with:
+```
+query: title = 'lc-mobile-qa-settings.json'
 ```
 
-- If the command **returns valid JSON**, extract `jira.cloudId`, `jira.site`, `jira.projectKey`, and `drive.folderId`. Proceed to Step 1.
-- If the command **returns nothing or an error**, run the **First-Run Setup** below before proceeding.
+- If **one result is returned**: call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__read_file_content` with its `id` and parse the JSON. Extract and hold in memory for the entire session: `jira.cloudId`, `jira.site`, `jira.projectKey`, and `drive.folderId`. **Do not ask the user about their Jira board configuration or Drive output folder — these are already known and will be used directly in Steps 2 and 6 respectively.** The specific ticket to test (ID or URL) is always provided by the user per invocation and is handled independently in Step 1 — it is never stored in settings. Proceed to Step 1.
+- If **no result is returned**: run **First-Run Setup** below before proceeding.
 
 ### First-Run Setup
 
 Tell the user:
 
-> "To get started, I need to configure two things: your Jira board and your Google Drive output folder. This only happens once — settings are saved to the plugin's config file and persist across sessions."
+> "I need to configure two things before we start: your Jira board and your Google Drive output folder.
+>
+> I'll save these settings as a file called **`lc-mobile-qa-settings.json`** in the root of your Google Drive. This file is what I'll look for at the start of every future session — so you won't need to configure this again."
 
 Ask the following questions using AskUserQuestion:
 
@@ -75,16 +61,13 @@ Ask the following questions using AskUserQuestion:
 Once the user provides both:
 - Derive `jira.site` from the board URL (e.g. `yourorg.atlassian.net`)
 - Resolve `jira.cloudId` via Atlassian MCP if not determinable from the URL alone
-- Write to the plugin's `config/settings.json` — **this is the only write target**. Do not write to `$HOME` or ephemeral session paths:
+- Create the settings file in Drive root via `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
+  - `title`: `"lc-mobile-qa-settings.json"`
+  - `contentMimeType`: `"application/json"`
+  - `base64Content`: the JSON below (with resolved values substituted), base64-encoded
+  - `parentId`: omit — this places the file at the Drive root intentionally, separate from the spreadsheet output folder
 
-```bash
-# Writing: plugin config/ only — persistent across Cowork sessions
-CONFIG_PATH=$(find /home /root /Users /sessions -maxdepth 6 \
-  -path "*/lc-claude-mobile-test-cases-handler/config" -type d 2>/dev/null | head -1)
-
-[ -z "$CONFIG_PATH" ] && { echo "ERROR: could not locate plugin config/ directory"; exit 1; }
-
-cat > "$CONFIG_PATH/settings.json" << 'EOF'
+```json
 {
   "jira": {
     "cloudId": "<resolved-cloud-id>",
@@ -97,11 +80,13 @@ cat > "$CONFIG_PATH/settings.json" << 'EOF'
     "folderUrl": "<full-drive-url-if-provided>"
   }
 }
-EOF
-echo "✓ Settings written to: $CONFIG_PATH/settings.json"
 ```
 
-Confirm with the user: "Configuration saved to `$CONFIG_PATH/settings.json`. This persists across Cowork sessions — you won't need to do this again." Then proceed.
+After creating the file, confirm to the user:
+
+> "Settings saved to **`lc-mobile-qa-settings.json`** in the root of your Google Drive. At the start of every future session I'll search for this file automatically — no need to configure again."
+
+Then proceed.
 
 ---
 
@@ -212,11 +197,13 @@ The Drive MCP's `create_file` does NOT auto-convert XLSX to Google Sheets — pe
 
 Upload the `.xlsx` to the configured Drive folder via the Drive MCP.
 
+`drive.folderId` was loaded from settings in Step 0 — do not ask the user where to save the file. This folder is the spreadsheet output destination and is distinct from the Drive root where `lc-mobile-qa-settings.json` lives.
+
 1. Read the local `.xlsx` as base64 and call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
    - `title`: `"<TICKET_ID>_TestCases.xlsx"` (keep the suffix)
    - `base64Content`: base64 of the file
    - `contentMimeType`: `"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
-   - `parentId`: `drive.folderId` (mandatory, never omit)
+   - `parentId`: `drive.folderId` (mandatory, never omit — this is the output folder, not the Drive root)
    - `disableConversionToGoogleType`: `true`
 
 2. Capture `id`, `mimeType`, `parents`, `webViewLink`. The result is an **XLSX** in the configured folder.
