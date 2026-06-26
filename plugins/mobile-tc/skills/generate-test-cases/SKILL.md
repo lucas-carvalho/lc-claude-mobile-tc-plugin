@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   author: "Lucas Carvalho"
 ---
 
@@ -57,7 +57,18 @@ query: title = 'lc-mobile-qa-settings.json'
     >
     > Once done, let me know and I'll update your settings file to mark `gcloud` as configured, then we can proceed."
 
-    Do not continue to Step 1 until the user confirms `gcloud` is set up. When they confirm, update the settings file to set `gcloud.configured: true` and `gcloud.account` to the authenticated account (ask the user for the account email, or run `gcloud config get-value account` to retrieve it), then proceed.
+    Do not continue to Step 1 until the user confirms `gcloud` is set up. When they confirm:
+    1. Run `gcloud config get-value account` to retrieve the authenticated account email.
+    2. Merge the `gcloud` block into the existing settings JSON (keep `jira` and `drive` unchanged).
+    3. **PATCH the existing file in place** using the Drive API — do NOT create a new file, as that would produce a duplicate that future searches may return instead:
+    ```bash
+    curl -s -X PATCH \
+      "https://www.googleapis.com/upload/drive/v3/files/<settings-file-id>?uploadType=media" \
+      -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+      -H "Content-Type: application/json" \
+      --data-binary '<updated-settings-json>'
+    ```
+    4. Confirm to the user that settings have been updated, then proceed to Step 1.
 
   - If `gcloud.configured` is `true`: proceed to Step 1.
 

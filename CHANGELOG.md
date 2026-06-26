@@ -1,6 +1,9 @@
 # Changelog
 
-## [1.0.0] — current
+## [1.0.1] — current
+- **Fix: settings update uses Drive API PATCH instead of creating a duplicate file.** When `gcloud` is confirmed after initial setup, the plugin now patches the existing `lc-mobile-qa-settings.json` in place via `PATCH /upload/drive/v3/files/{id}` — no duplicate is created.
+
+## [1.0.0]
 - **Upload rewritten — gcloud + Drive API, native Google Sheet output.** Replaced the Drive MCP base64 upload (which truncated files >13 KB and produced XLSX) with a `gcloud auth print-access-token` + Drive API multipart upload using `mimeType: application/vnd.google-apps.spreadsheet`. The file is converted server-side on upload and lands directly in the configured folder as a native Google Sheet — no manual conversion step.
 - **gcloud is now a required dependency.** The plugin declares itself non-functional if `gcloud.configured` is missing or `false` in settings. Step 0 stops immediately and walks the user through `brew install --cask google-cloud-sdk` + `gcloud auth login --enable-gdrive-access` before proceeding.
 - **Settings schema extended with `gcloud` block.** `lc-mobile-qa-settings.json` now includes `gcloud: { configured: true, account: "..." }`. First-run setup and the gcloud-missing recovery path both write this block.
