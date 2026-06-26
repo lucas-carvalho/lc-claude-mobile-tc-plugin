@@ -7,7 +7,7 @@ description: >
   Also triggers on "test case spreadsheet", "QA sheet", or any request to generate QA scenarios
   for a mobile app ticket from a configured Jira board.
 metadata:
-  version: "0.6.3"
+  version: "0.6.4"
   author: "Lucas Carvalho"
 ---
 
@@ -102,21 +102,6 @@ echo "✓ Settings written to: $CONFIG_PATH/settings.json"
 ```
 
 Confirm with the user: "Configuration saved to `$CONFIG_PATH/settings.json`. This persists across Cowork sessions — you won't need to do this again." Then proceed.
-
-### Chrome MCP preflight (check once at startup)
-
-Before Step 1, check whether Claude in Chrome is available. This determines the Drive upload path used in Step 6 and avoids a late surprise.
-
-```
-mcp__Claude_in_Chrome__list_connected_browsers
-```
-
-- If it **returns at least one browser**: note `CHROME_AVAILABLE=true`. Path A will be used in Step 6.
-- If it **returns empty or errors**: note `CHROME_AVAILABLE=false` and inform the user upfront:
-
-  > "Claude in Chrome is not connected. The spreadsheet will be uploaded as an XLSX file (Path B). To get a native Google Sheet instead, open Claude in Chrome in your browser before the next run."
-
-  Proceed normally — Path B is a valid fallback, just set the expectation early.
 
 ---
 
@@ -219,63 +204,20 @@ Read `references/formatting.md` for exact openpyxl code patterns.
 
 ---
 
-## Step 6: Upload to Google Drive — Native Google Sheet in the Configured Folder
-
-**Goal:** end with exactly one file in Drive — a native Google Sheet — inside the configured folder. Nothing in the Drive root, no leftover `.xlsx` in the folder.
+## Step 6: Upload to Google Drive — XLSX in the Configured Folder
 
 ### What this MCP can and can't do
 
 The Drive MCP's `create_file` does NOT auto-convert XLSX to Google Sheets — per its docs, only `text/csv` and `text/plain` are auto-converted. The `disableConversionToGoogleType` flag has no effect for XLSX. **Confirmed by behavior, not assumed.**
 
-To get a native Google Sheet we therefore drive the upload through the Drive **web UI** via Claude in Chrome. The web UI honors the user's account-level "Convert uploads to Google Docs editor format" setting (in `drive.google.com/drive/settings`), which auto-converts XLSX to GSheets server-side when the upload happens through the UI. The setting must be enabled — verify with the user once if uncertain.
-
-### Path A — Primary: Chrome MCP via Drive Web UI
-
-1. **Route check.** If `CHROME_AVAILABLE=false` (set in Step 0), skip directly to **Path B** — no need to recheck.
-
-2. **Set up a tab.** Call `tabs_context_mcp({ createIfEmpty: true })` to get the tab group. Call `tabs_create_mcp()` to claim a fresh tab; remember the returned `tabId`.
-
-3. **Navigate to the configured folder:**
-
-   ```
-   navigate(tabId, url=`https://drive.google.com/drive/folders/${drive.folderId}`)
-   ```
-
-4. **Confirm the page is the right folder.** Call `get_page_text(tabId)`; the response should contain the folder name (read it from `drive.folderUrl` or scan the breadcrumb area). If Drive shows a login screen, stop and ask the user to sign in — do not attempt credential entry.
-
-5. **Locate the drag-drop file input.** Call `find(tabId, query="hidden file upload input for drag and drop")`. Drive exposes an `<input type="file" multiple>` element that drag-drop targets — you want that element's `ref`. If `find` returns multiple matches, prefer one whose attributes suggest the upload zone for the current folder view.
-
-6. **Upload via `file_upload`:**
-
-   ```
-   file_upload(tabId, ref=<input-ref>, paths=["/sessions/<session>/mnt/outputs/<TICKET_ID>_TestCases.xlsx"])
-   ```
-
-   This dispatches the file to Drive's upload handler. Because the Drive account has "Convert uploads" enabled, the result is a Google Sheet created **in the current folder**, not the root.
-
-7. **Wait for the upload to settle.** Poll the Drive MCP every ~5s for up to 60s:
-
-   ```
-   search_files query:
-     title contains '<TICKET_ID>_TestCases'
-     and mimeType = 'application/vnd.google-apps.spreadsheet'
-     and parentId = '<drive.folderId>'
-   ```
-
-   Stop polling as soon as a match returns. Capture its `id`, `name`, `mimeType`, `parents`, and `webViewLink`.
-
-8. **Close the tab** once verified: `tabs_close_mcp(tabId)`.
-
-### Path B — Fallback: Drive MCP upload (when Chrome MCP unavailable)
-
-If Step 1 above showed no browser, or any step in Path A fails after one retry, fall back to:
+Upload the `.xlsx` to the configured Drive folder via the Drive MCP.
 
 1. Read the local `.xlsx` as base64 and call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__create_file` with:
-   - `title`: `"<TICKET_ID>_TestCases.xlsx"` (keep the suffix — it stays XLSX)
+   - `title`: `"<TICKET_ID>_TestCases.xlsx"` (keep the suffix)
    - `base64Content`: base64 of the file
    - `contentMimeType`: `"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
    - `parentId`: `drive.folderId` (mandatory, never omit)
-   - `disableConversionToGoogleType`: `true` (explicit — we know conversion isn't supported here)
+   - `disableConversionToGoogleType`: `true`
 
 2. Capture `id`, `mimeType`, `parents`, `webViewLink`. The result is an **XLSX** in the configured folder.
 
@@ -283,29 +225,18 @@ If Step 1 above showed no browser, or any step in Path A fails after one retry, 
 
    > To convert to a native Google Sheet: open the file in Drive, then **File → Save as Google Sheets**. The converted copy lands in **My Drive** root — move it to the original folder via right-click → **Organize → Move**, then delete the `.xlsx`.
 
-   Be explicit that the manual conversion lands in root by default — don't promise auto-placement.
-
 ---
 
 ## Step 6.5: Verify the Final State (Mandatory)
 
-Independent of which path ran, before reporting success in Step 7, confirm via Drive MCP that exactly the right file exists in the right place.
+Before reporting success in Step 7, confirm via Drive MCP that the file is in the right place.
 
 1. Call `mcp__0948f3c6-7a85-418d-ab1c-3fdf6d0cd2b2__get_file_metadata` with the captured `fileId`.
 
-2. Assert based on which path ran:
-
-   **Path A (Chrome MCP):**
-   - `mimeType == "application/vnd.google-apps.spreadsheet"`
-   - `<drive.folderId>` appears in `parents`
-   - `name == "<TICKET_ID>_TestCases"` or starts with that prefix (Drive may add a number suffix if a same-named file existed)
-
-   **Path B (Drive MCP fallback):**
-   - `mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"` (XLSX preserved — expected)
+2. Assert:
+   - `mimeType == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"`
    - `<drive.folderId>` appears in `parents`
    - `name == "<TICKET_ID>_TestCases.xlsx"`
-
-3. (Path A only, optional) Call `read_file_content` on the `fileId` and check that `"Test Cases"` and `"Block Summary"` sheet names appear. This confirms the conversion preserved structure.
 
 ### If any assertion fails
 

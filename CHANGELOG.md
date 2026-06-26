@@ -1,6 +1,9 @@
 # Changelog
 
-## [0.6.3] — current
+## [0.6.4] — current
+- **Removed Chrome MCP upload path.** Claude in Chrome is unavailable in enterprise org environments that restrict browser extensions. The Drive MCP upload (previously Path B / fallback) is now the sole upload path — no preflight check, no Path A logic, no dead code. The Step 7 confirmation includes a one-line manual conversion instruction (XLSX → Google Sheet via File → Save as Google Sheets).
+
+## [0.6.3]
 - **Stronger Gherkin rules.** Added anti-patterns table (`Given isX=true` → user-scenario language), `And`-vs-new-TC split guidance, and explicit `Given`/`Then` semantics (user context, not internal variables/state).
 - **AC-TC binding upgraded to hard requirement.** Every TC must carry `Ref: AC-N` in Notes (or `Assumption` when the ticket has no ACs). Orphan TCs are invalid. An AC Coverage Gate now blocks spreadsheet generation (Step 5) until every uncovered AC is resolved by the user.
 - **Mock derivation process.** Mock Checklist is now derived from `Given` clauses across all TCs — grouped by shared state, named by user scenario, cross-referenced with TC IDs.

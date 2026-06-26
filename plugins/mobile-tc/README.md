@@ -13,7 +13,7 @@ Given a Jira ticket ID or URL, the plugin:
 3. **Classifies the ticket type** (Functional, Integration, Component, or Bug)
 4. **Generates test cases** organized into thematic Blocks, from a functional tester's perspective
 5. **Exports a formatted `.xlsx`** locally — color-coded blocks, Gherkin descriptions, dropdowns, multi-sheet layout
-6. **Uploads to your Google Drive folder** as a **native Google Sheet** when Claude in Chrome is connected (Path A), falling back to an XLSX upload when it isn't (Path B — see [Drive Output Format](#drive-output-format) below)
+6. **Uploads to your Google Drive folder** as an XLSX file via the Drive MCP
 
 ## First-Time Setup
 
@@ -61,15 +61,7 @@ Just mention a ticket ID or URL in chat:
 
 ## Drive Output Format
 
-The plugin uses two upload paths depending on what's connected:
-
-### Path A — Native Google Sheet (preferred)
-
-When **Claude in Chrome** is connected and you've enabled **"Convert uploads to Google Docs editor format"** in your Drive account settings, the plugin routes the upload through the Drive web UI. Drive auto-converts the XLSX to a native Google Sheet server-side, and it lands directly inside the configured folder. No leftover files in Drive root, no manual conversion needed.
-
-### Path B — XLSX with manual conversion (fallback)
-
-When Claude in Chrome is unavailable (extension not connected, browser logged out, etc.), the plugin falls back to uploading the XLSX via the Drive MCP. The file lands correctly in the configured folder but stays in XLSX format — the Drive MCP doesn't auto-convert XLSX. The Step 7 confirmation will include a one-line instruction to convert manually (Open the file → File → Save as Google Sheets → move to the target folder).
+The plugin uploads the XLSX via the Drive MCP. The file lands in the configured folder in XLSX format — the Drive MCP doesn't auto-convert XLSX to Google Sheets. The Step 7 confirmation includes a one-line instruction to convert manually: open the file → **File → Save as Google Sheets** → move the converted copy back to the target folder.
 
 ### Stale-duplicate scan
 
@@ -86,17 +78,10 @@ The plugin surfaces quality signals before generating TCs:
 
 ## Requirements
 
-**Always required:**
 - **Claude Code** with **Cowork** support — available on **Team** and **Enterprise** plans only
 - **Atlassian MCP** connected and authenticated (for Jira access)
 - **Google Drive MCP** connected and authenticated (for the upload + verification + stale-duplicate scan)
 - Python 3 with `pip` available in the execution environment (`openpyxl` is installed automatically if needed)
-
-**Required only for Path A (native Google Sheet output):**
-- **Claude in Chrome** extension connected, with the user signed in to Google Drive on the active browser
-- **Drive setting "Convert uploads to Google Docs editor format" enabled** at `drive.google.com/drive/settings` → Uploads. This is what tells Drive to auto-convert XLSX uploads to native Google Sheets server-side.
-
-Without either of these two, the plugin still works — it just uses Path B (XLSX upload + manual conversion instruction). See [Drive Output Format](#drive-output-format) for details.
 
 > **Note:** This plugin will not work on Free or Pro plans. It depends on the Cowork plugin system and persistent session storage, which are exclusive to Team and Enterprise plans.
 
